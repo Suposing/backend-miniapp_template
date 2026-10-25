@@ -1,0 +1,9 @@
+/* #ifndef MP */
+@import url('@unocss-applet/reset/uni-app/tailwind-compat.css');
+/* #endif */
+
+/* #ifdef MP */
+@import url('./tailwind-compat.no-span.css');
+/* #endif */
+
+@import './theme.scss';

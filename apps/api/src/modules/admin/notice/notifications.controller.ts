@@ -1,0 +1,70 @@
+import { AdminController } from '../decorators/admin-controller.decorator';
+import {
+    Get,
+    HttpCode,
+    Param,
+    Post,
+    Query,
+    Req,
+    UseGuards,
+} from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { Request } from 'express';
+import { NotificationsService } from './notifications.service';
+import { NotificationQueryDto } from './dto/notification-query.dto';
+import { AuthUser } from '../auth/auth.service';
+import { DemoAllowed } from '../auth/decorators/demo-allowed.decorator';
+
+/**
+ * 站内信铃铛：仅登录态（无权限位），数据严格限定当前用户。
+ * 静态路由 unread-count / read-all 声明在 :id 参数路由之前。
+ */
+@AdminController('notifications')
+@UseGuards(AuthGuard('admin-jwt'))
+export class NotificationsController {
+    constructor(private readonly notificationsService: NotificationsService) {}
+
+    private userId(req: Request): string {
+        return (req.user as AuthUser)?.id ?? '';
+    }
+
+    /**
+     * GET /api/admin/notifications —— 通知列表（铃铛面板）
+     */
+    @Get()
+    findAll(@Query() query: NotificationQueryDto, @Req() req: Request) {
+        return this.notificationsService.findAll(this.userId(req), {
+            page: query.page ?? 1,
+            pageSize: query.pageSize ?? 10,
+            unreadOnly: query.unreadOnly === 'true',
+        });
+    }
+
+    /**
+     * GET /api/admin/notifications/unread-count —— 未读数（红点轮询）
+     */
+    @Get('unread-count')
+    unreadCount(@Req() req: Request) {
+        return this.notificationsService.unreadCount(this.userId(req));
+    }
+
+    /**
+     * POST /api/admin/notifications/read-all —— 全部已读（演示只读白名单：只改当前用户自身已读状态）
+     */
+    @Post('read-all')
+    @HttpCode(200)
+    @DemoAllowed()
+    readAll(@Req() req: Request) {
+        return this.notificationsService.readAll(this.userId(req));
+    }
+
+    /**
+     * POST /api/admin/notifications/:id/read —— 单条已读（演示只读白名单）
+     */
+    @Post(':id/read')
+    @HttpCode(200)
+    @DemoAllowed()
+    readOne(@Param('id') id: string, @Req() req: Request) {
+        return this.notificationsService.readOne(this.userId(req), id);
+    }
+}

@@ -1,0 +1,47 @@
+/**
+ * 从当前界面主色读取并派生图表用色，保持明暗模式和视觉辅助设置一致。
+ */
+
+/**
+ * 扇区 / 系列色相轮转偏移（度，六段循环）
+ */
+const HUE_OFFSETS = [0, 42, -42, 84, -84, 126];
+
+/**
+ * 第 index 个分类色：由主色派生，恒定明度 L、彩度取品牌 0.72 倍、只轮转色相。
+ *
+ * 与 React / Next 基准同一色相标度，不新增色值。弃用「主色透明度阶梯」的原因：
+ * alpha 是与卡片底色混合，深色模式下低 alpha 系列几乎与底色同化，相邻扇区无法分辨。
+ */
+export function chartColor(index: number): string {
+    const offset = HUE_OFFSETS[index % HUE_OFFSETS.length];
+    const sign = offset < 0 ? '-' : '+';
+
+    return `oklch(from var(--ui-primary) l calc(c * 0.72) calc(h ${sign} ${Math.abs(offset)}))`;
+}
+
+/**
+ * 构造 Unovis Tooltip 的内容节点。
+ *
+ * `VisTooltip.triggers` 允许直接返回 HTML 字符串，但角色名、公告标题这类是后台可
+ * 编辑数据，拼进 innerHTML 等于开一个注入面 —— 一律走 createElement + textContent。
+ *
+ * 字号必须自己给：库的 Tooltip 没有 font-size 变量（只有背景/边框/圆角/内边距），
+ * 文字继承容器字号会到 16px，比三端基准的 12px 大一圈。
+ */
+export function chartTooltipNode(label: string, value: string): HTMLElement {
+    const box = document.createElement('div');
+    const labelEl = document.createElement('p');
+
+    labelEl.className = 'text-muted text-xs';
+    labelEl.textContent = label;
+
+    const valueEl = document.createElement('p');
+
+    valueEl.className = 'text-highlighted text-xs font-semibold tabular-nums';
+    valueEl.textContent = value;
+
+    box.append(labelEl, valueEl);
+
+    return box;
+}

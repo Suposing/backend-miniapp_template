@@ -1,0 +1,42 @@
+{
+    "name": "backend-miniapp-template",
+    "private": true,
+    "version": "0.1.0",
+    "packageManager": "pnpm@9.15.9",
+    "engines": {
+        "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+    },
+    "scripts": {
+        "setup": "node scripts/setup.mjs",
+        "dev:admin": "pnpm build:shared && pnpm --filter @app/admin dev",
+        "dev:api": "pnpm build:shared && pnpm --filter @app/api dev",
+        "build": "pnpm build:shared && pnpm --filter @app/api build && pnpm --filter @app/admin build",
+        "test": "pnpm test:setup && pnpm test:shared && node scripts/test-db.mjs && pnpm --filter @app/api test && pnpm --filter @app/admin test",
+        "test:setup": "node --test scripts/tests/*.test.mjs",
+        "db:generate": "pnpm --filter @app/api db:generate",
+        "db:migrate": "pnpm --filter @app/api db:migrate",
+        "db:seed": "pnpm build:shared && pnpm --filter @app/api db:seed",
+        "lint": "eslint .",
+        "dev:miniapp": "pnpm build:shared && pnpm --filter @app/miniapp dev:mp-weixin",
+        "dev:miniapp:h5": "pnpm build:shared && pnpm --filter @app/miniapp dev:h5",
+        "build:miniapp": "pnpm build:shared && pnpm --filter @app/miniapp build:mp-weixin",
+        "check:miniapp": "pnpm build:shared && pnpm --filter @app/miniapp type-check && pnpm --filter @app/miniapp test && pnpm --filter @app/miniapp lint",
+        "lint:fix": "eslint . --fix",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "build:shared": "pnpm --filter @app/shared build",
+        "dev:shared": "pnpm --filter @app/shared dev",
+        "test:shared": "pnpm --filter @app/shared test"
+    },
+    "devDependencies": {
+        "@eslint/js": "10.0.1",
+        "eslint": "10.13.0",
+        "eslint-config-prettier": "10.1.8",
+        "eslint-plugin-vue": "10.11.1",
+        "globals": "17.13.0",
+        "prettier": "3.9.10",
+        "typescript": "5.9.3",
+        "typescript-eslint": "8.72.0",
+        "vue-eslint-parser": "10.4.1"
+    }
+}

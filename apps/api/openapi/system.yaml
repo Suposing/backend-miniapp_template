@@ -1,0 +1,50 @@
+openapi: 3.0.3
+
+info:
+    title: 基础模板系统 API
+    version: 0.1.0
+    description: 公共进程存活检查，不属于后台或小程序业务接口。
+
+servers:
+    - url: http://localhost:3000/api
+
+tags:
+    - name: System
+      description: 服务健康检查
+
+paths:
+    /health:
+        get:
+            tags: [System]
+            summary: 存活探针
+            description: 无鉴权的进程存活检查，不查询数据库，也不写员工审计日志。
+            operationId: getHealth
+            security: []
+            x-permission: NONE
+            responses:
+                '200':
+                    description: 服务存活
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [data]
+                                properties:
+                                    data:
+                                        type: object
+                                        required:
+                                            [status, uptimeSeconds, timestamp]
+                                        properties:
+                                            status:
+                                                type: string
+                                                enum: [ok]
+                                                example: ok
+                                            uptimeSeconds:
+                                                type: integer
+                                                description: 进程存活秒数
+                                                example: 3600
+                                            timestamp:
+                                                type: string
+                                                format: date-time
+                                                description: 服务器当前时间（ISO 8601）
+                                                example: '2026-09-22T04:00:00.000Z'

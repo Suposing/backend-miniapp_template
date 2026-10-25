@@ -1,0 +1,483 @@
+<script setup lang="ts">
+    import { computed } from 'vue';
+
+    import { useRoute } from 'vue-router';
+    import { useQueryClient } from '@tanstack/vue-query';
+    import type {
+        CommandPaletteGroup,
+        CommandPaletteItem,
+        NavigationMenuItem,
+    } from '@nuxt/ui';
+
+    import type { MenuNode } from '@/lib/api-types';
+    import { useAuthSync } from '@/composables/use-auth-sync';
+    import { MENUS_QUERY_KEY, useMenus } from '@/composables/use-menus';
+    import { CONSOLE_MENU_NODE } from '@/lib/menu-fetch';
+    import { ENV } from '@/lib/env';
+    import { filterHiddenMenus } from '@/lib/permission';
+    import { findActivePath } from '@/lib/menu-utils';
+    import { resolveRouteTitle } from '@/lib/route-access';
+    import ConfigDrawer from '@/components/layout/ConfigDrawer.vue';
+    import FullscreenButton from '@/components/layout/FullscreenButton.vue';
+    import KeepAliveOutlet from '@/components/layout/KeepAliveOutlet.vue';
+
+    import NoticeBell from '@/components/layout/NoticeBell.vue';
+    import SidebarBrand from '@/components/layout/SidebarBrand.vue';
+    import TagsBar from '@/components/layout/TagsBar.vue';
+    import UserMenu from '@/components/layout/UserMenu.vue';
+    import {
+        type ThemeMode,
+        useDesignThemeStore,
+    } from '@/stores/design-theme-store';
+    import { useTabsStore } from '@/stores/tabs-store';
+
+    /**
+     * Admin 双栏布局（Nuxt UI Dashboard 套件，结构遵循当前组件的 admin-layout）：
+     * - 侧边栏：品牌下拉（技术栈入口）+ 导航菜单（骨架屏 / 失败重试 / 折叠 tooltip
+     *   + 悬浮子菜单）+ 底部快捷链接（文档 / GitHub / 博客）+ 用户菜单
+     * - 顶栏：折叠按钮（leading，移动端为打开抽屉）+ 面包屑 + 右侧
+     *   搜索 / 通知 / 全屏 / 偏好抽屉；顶栏下方为多标签页栏（偏好可隐藏）
+     * - 主体：KeepAliveOutlet（标签页联动的 KeepAlive 保活 + 刷新）；全宽页面
+     *   （架构图谱 / 我的公告）去内边距
+     * - useAuthSync：挂载时 /auth/me 快照同步
+     */
+    useAuthSync();
+
+    const route = useRoute();
+    const queryClient = useQueryClient();
+    const designTheme = useDesignThemeStore();
+    const tabsStore = useTabsStore();
+
+    const { data: menus, isLoading, error } = useMenus();
+
+    interface NavLeaf {
+        /**
+         * 界面展示的中文名称或控件标签。
+         */
+        label: string;
+        /**
+         * 图标名称，按当前组件的图标约定渲染。
+         */
+        icon?: string;
+        /**
+         * 页面路由或外部链接；空值表示没有直接跳转目标。
+         */
+        to?: string;
+        /**
+         * 精确匹配路由（叶子节点默认 true，避免 / 匹配所有路径）
+         */
+        exact?: boolean;
+        /**
+         * 组件初始化时是否展开内容。
+         */
+        defaultOpen?: boolean;
+        /**
+         * 当前节点的直接子节点列表；空数组表示叶节点。
+         */
+        children?: NavLeaf[];
+    }
+
+    function toNavLeaf(node: MenuNode): NavLeaf {
+        return {
+            label: node.label,
+            icon: node.icon ? `i-lucide-${node.icon}` : undefined,
+            to: node.to ?? undefined,
+            // 叶子节点（具体页面）使用精确匹配，避免 / 前缀匹配所有路由
+            exact: !node.children?.length,
+            defaultOpen: node.defaultOpen,
+            children: node.children?.map(toNavLeaf),
+        };
+    }
+
+    /**
+     * 菜单树 → 侧边栏 items：
+     * - 仅做 hideInMenu 过滤（权限过滤由后端 GET /menus 完成，见 menu-fetch.ts）
+     * - 保持一维数组结构，利用 children 属性嵌套，与 React 端 MenuNode[] 结构一致。
+     * - UNavigationMenu 会自动处理 children 渲染和路由高亮。
+     * - 接口加载失败时回退为仅「控制台」：该节点为前端固定注入（登录即可见，
+     *   不依赖后端下发），不应因 /menus 失败而连控制台入口一起消失
+     *   。
+     */
+    const sidebarItems = computed<NavLeaf[]>(() => {
+        const source = error.value ? [CONSOLE_MENU_NODE] : (menus.value ?? []);
+
+        return filterHiddenMenus(source).map(toNavLeaf);
+    });
+
+    /**
+     * 底部快捷链接数据源：侧边栏与命令面板共用一份，
+     * 新增条目只改这里；地址全部来自 lib/env（仓库地址真源在 package.json）。
+     */
+    const SIDEBAR_LINKS = [
+        {
+            href: ENV.docsUrl,
+            icon: 'i-lucide-book-open',
+            labelText: '文档',
+        },
+        {
+            href: ENV.repoUrl,
+            icon: 'i-lucide-github',
+            labelText: 'Github',
+        },
+        {
+            href: ENV.blogUrl,
+            icon: 'i-lucide-house',
+            labelText: '博客',
+        },
+    ].filter((link) => Boolean(link.href));
+
+    /**
+     * 菜单区底部快捷链接（新窗口跳转）。
+     */
+    const quickLinks = computed<NavigationMenuItem[][]>(() => [
+        SIDEBAR_LINKS.map((link) => ({
+            icon: link.icon,
+            label: link.labelText,
+            target: '_blank',
+            to: link.href,
+        })),
+    ]);
+
+    /**
+     * 面包屑：当前路由在可见菜单树中的「分组 → 页面」链；非菜单路由依次回退
+     * 页面写入的 tabs meta 快照与路由静态标题键。
+     */
+    const crumbs = computed(() => {
+        const chain = findActivePath(
+            filterHiddenMenus(menus.value ?? []),
+            route.path,
+        );
+
+        if (chain.length > 0) {
+            return chain.map((node) => ({
+                label: node.label,
+            }));
+        }
+
+        const liveMeta = tabsStore.meta[route.path];
+
+        if (liveMeta?.title) {
+            return liveMeta.parentTitle
+                ? [{ label: liveMeta.parentTitle }, { label: liveMeta.title }]
+                : [{ label: liveMeta.title }];
+        }
+
+        const titleText = resolveRouteTitle(route.path);
+
+        return titleText ? [{ label: titleText }] : [];
+    });
+
+    /**
+     * 菜单节点显示名（使用菜单名称）
+     */
+    function menuLabel(node: MenuNode): string {
+        return node.label;
+    }
+
+    /**
+     * 主题切换条目（labelText 直接展示；keywords 供英文关键字搜索）
+     */
+    const THEME_COMMANDS: {
+        /**
+         * 当前操作模式，由调用方选择创建、编辑或展示。
+         */
+        mode: ThemeMode;
+        /**
+         * 图标名称，按当前组件的图标约定渲染。
+         */
+        icon: string;
+        /**
+         * 菜单搜索使用的补充匹配关键词。
+         */
+        keywords: string;
+    }[] = [
+        { mode: 'light', icon: 'i-lucide-sun', keywords: 'light' },
+        { mode: 'dark', icon: 'i-lucide-moon', keywords: 'dark' },
+        { mode: 'system', icon: 'i-lucide-monitor', keywords: 'system auto' },
+    ];
+
+    /**
+     * 命令面板分组：保持菜单树形，不拍平——这点与 React 端 command-menu 的
+     * collectMenuSections（「父级 › 页面」平铺）不同，UDashboardSearch 对 children
+     * 有内置钻取交互（CommandPalette：带 children 的条目渲染 chevron，点击/回车
+     * navigate 进入子级，Backspace 返回上级），无需外部展平。
+     * - 顶层分组节点 → 一节（标题为分组名），children 树形直传；
+     * - 顶层叶子节点（如控制台）→ 无标题单条目节；
+     * - 快捷链接组（外链新窗口）+ 主题组（经 design-theme-store 切换，带揭示动画；
+     *   故关闭 UDashboardSearch 内置的 colorMode 组，避免绕过 store 无动画直改）。
+     * 数据源与侧边栏同一份 hideInMenu 过滤后的菜单树。
+     */
+    function toCommandItem(node: MenuNode): CommandPaletteItem | null {
+        const label = menuLabel(node);
+
+        if (node.children?.length) {
+            const children = node.children
+                .map(toCommandItem)
+                .filter((item): item is CommandPaletteItem => item !== null);
+
+            return children.length > 0
+                ? {
+                      label,
+                      icon: node.icon ? `i-lucide-${node.icon}` : undefined,
+                      children,
+                  }
+                : null;
+        }
+
+        if (!node.to) return null;
+
+        return {
+            label,
+            icon: node.icon ? `i-lucide-${node.icon}` : undefined,
+            to: node.to,
+        };
+    }
+
+    const searchGroups = computed<CommandPaletteGroup[]>(() => {
+        const groups: CommandPaletteGroup[] = [];
+
+        for (const node of filterHiddenMenus(menus.value ?? [])) {
+            const rootLabel = menuLabel(node);
+
+            if (node.children?.length) {
+                const items = node.children
+                    .map(toCommandItem)
+                    .filter(
+                        (item): item is CommandPaletteItem => item !== null,
+                    );
+
+                if (items.length > 0) {
+                    groups.push({
+                        id: `menu-${node.id}`,
+                        label: rootLabel,
+                        items,
+                    });
+                }
+            } else if (node.to) {
+                groups.push({
+                    id: `menu-${node.id}`,
+                    items: [
+                        {
+                            label: rootLabel,
+                            icon: node.icon
+                                ? `i-lucide-${node.icon}`
+                                : undefined,
+                            to: node.to,
+                        },
+                    ],
+                });
+            }
+        }
+
+        groups.push({
+            id: 'quickLinks',
+            label: '友情链接',
+            items: SIDEBAR_LINKS.map((link) => ({
+                icon: link.icon,
+                label: link.labelText,
+                searchText: link.labelText,
+                target: '_blank',
+                to: link.href,
+            })),
+        });
+
+        groups.push({
+            id: 'theme',
+            label: '主题',
+            items: THEME_COMMANDS.map(({ mode, icon, keywords }) => {
+                const label = (
+                    {
+                        dark: '深色',
+                        label: '主题模式',
+                        light: '浅色',
+                        system: '跟随系统',
+                        tooltip: '界面的明暗外观，跟随系统时自动切换',
+                    } as Record<string, string>
+                )[mode];
+
+                return {
+                    label,
+                    icon,
+                    active: designTheme.themeMode === mode,
+                    searchText: `${label} ${keywords}`,
+                    onSelect: () => designTheme.setThemeMode(mode),
+                };
+            }),
+        });
+
+        return groups;
+    });
+
+    /**
+     * 全宽页面白名单。
+     */
+    const FULL_WIDTH_ROUTES = [
+        '/org/chart',
+        '/my-notices',
+        '/exception/403',
+        '/exception/404',
+        '/exception/500',
+    ];
+    const isFullWidthPage = computed(() =>
+        FULL_WIDTH_ROUTES.includes(route.path),
+    );
+
+    /**
+     * 菜单加载失败重试。
+     */
+    function retryMenus() {
+        void queryClient.refetchQueries({
+            queryKey: MENUS_QUERY_KEY,
+            exact: true,
+        });
+    }
+</script>
+
+<template>
+    <UDashboardGroup unit="rem">
+        <UDashboardSidebar collapsible>
+            <template #header="{ collapsed }">
+                <SidebarBrand :collapsed="collapsed" />
+            </template>
+
+            <template #default="{ collapsed }">
+                <UDashboardSearchButton
+                    :collapsed
+                    class="bg-transparent ring-default"
+                />
+                <!-- 菜单加载骨架屏（图标方块 + 两行文字占位） -->
+                <div v-if="isLoading" class="flex flex-col gap-1">
+                    <div
+                        v-for="index in 6"
+                        :key="index"
+                        class="flex items-center gap-3 rounded-lg px-3 py-2"
+                    >
+                        <USkeleton class="size-5 rounded-lg" />
+                        <USkeleton
+                            v-if="!collapsed"
+                            class="h-3.5 rounded-full"
+                            :style="{ width: `${55 + ((index * 13) % 35)}%` }"
+                        />
+                    </div>
+                </div>
+
+                <!-- 菜单：加载失败时 sidebarItems 已回退为仅「控制台」，照常渲染 -->
+                <UNavigationMenu
+                    v-else
+                    :collapsed="collapsed"
+                    :items="sidebarItems"
+                    orientation="vertical"
+                    tooltip
+                    popover
+                    :ui="{ separator: 'hidden' }"
+                />
+
+                <!-- 底部快捷链接：菜单区与用户区之间（mt-auto 贴底） -->
+                <UNavigationMenu
+                    :collapsed="collapsed"
+                    :items="quickLinks"
+                    orientation="vertical"
+                    tooltip
+                    class="mt-auto"
+                    :ui="{ separator: 'hidden' }"
+                />
+            </template>
+
+            <template #footer="{ collapsed }">
+                <UserMenu :collapsed="collapsed" />
+            </template>
+        </UDashboardSidebar>
+
+        <!-- 命令面板（Cmd/Ctrl+K）：分组数据见 searchGroups（菜单树保持 children
+         结构，钻取交互由组件内置）；fuse 追加 searchText 键使主题英文关键字可被
+         搜索；主题组自建（关闭内置 colorMode 组）。
+         显式提供中文标题和说明。 -->
+        <UDashboardSearch
+            :color-mode="false"
+            :fuse="{ fuseOptions: { keys: ['label', 'suffix', 'searchText'] } }"
+            :groups="searchGroups"
+            title="命令面板"
+            description="搜索菜单"
+            placeholder="输入命令或搜索…"
+        />
+
+        <!-- 面板 body（滚动容器）绑定 route-vt-main：view-transition-name: main-content，
+         路由过渡动画只作用于主体区（侧边栏 / 顶栏不参与，见 styles/route-transitions.css），
+         主题切换 VT 期间由 theme-transition.css 临时摘名并入 root 组统一揭示 -->
+        <UDashboardPanel
+            :ui="{
+                body: isFullWidthPage
+                    ? 'route-vt-main p-0! sm:p-0!'
+                    : 'route-vt-main',
+            }"
+        >
+            <template #header>
+                <UDashboardNavbar>
+                    <!-- 折叠按钮：桌面折叠/展开，移动端打开抽屉（组件内置行为） -->
+                    <template #leading>
+                        <UDashboardSidebarCollapse />
+                    </template>
+
+                    <!-- 面包屑：分组 → 页面 -->
+                    <template #title>
+                        <UBreadcrumb :items="crumbs" />
+                    </template>
+
+                    <template #right>
+                        <div class="flex items-center gap-2">
+                            <NoticeBell />
+                            <FullscreenButton />
+
+                            <ConfigDrawer />
+                        </div>
+                    </template>
+                </UDashboardNavbar>
+
+                <!-- 多标签页栏：置于 UDashboardToolbar 内，边框由 toolbar 提供；覆盖其
+             默认 min-h-[49px] / px-4 让高度与内边距由 TagsBar 自身决定（h-10 +
+             px-2，对齐 React 端 40px 栏高）。偏好设置可隐藏（关闭仅隐藏 UI，
+             不清空已打开标签）。 -->
+                <UDashboardToolbar
+                    v-if="designTheme.showTabs"
+                    :ui="{ root: 'min-h-0 px-0 sm:px-0' }"
+                >
+                    <TagsBar />
+                </UDashboardToolbar>
+            </template>
+
+            <template #body>
+                <!-- 菜单加载失败：主体区错误覆盖层（对齐 React 端 ErrorOverlay），
+             不误跳 403；重试即重新拉取 /menus -->
+                <div
+                    v-if="error"
+                    class="flex h-full min-h-[50vh] flex-col items-center justify-center gap-2 rounded-2xl border border-default bg-elevated/50 text-muted"
+                >
+                    <UIcon
+                        aria-hidden
+                        class="size-10 text-error"
+                        name="i-lucide-triangle-alert"
+                    />
+                    <p class="font-medium text-default">权限数据加载失败</p>
+                    <p class="max-w-80 text-center text-sm">
+                        菜单接口请求失败，请检查网络后重试；若持续失败请联系管理员。
+                    </p>
+                    <UButton
+                        class="mt-2"
+                        label="重试"
+                        color="neutral"
+                        size="sm"
+                        variant="outline"
+                        @click="retryMenus"
+                    />
+                </div>
+
+                <!-- display:contents 包裹层：覆盖层显示期间以 v-show 隐藏而非卸载，
+             KeepAliveOutlet 的保活实例池与路由 VT 守卫保持挂载，恢复后原页面
+             状态无损（同 React 端 overlay 语义） -->
+                <div v-show="!error" class="contents">
+                    <KeepAliveOutlet />
+                </div>
+            </template>
+        </UDashboardPanel>
+    </UDashboardGroup>
+</template>

@@ -1,0 +1,37 @@
+:root,
+page {
+    // 品牌主色
+    --app-color-primary: #2080f0;
+    --app-color-primary-end: #4098fc;
+
+    // 页面与内容层级
+    --app-color-page: #f8f8f8;
+    --app-color-surface: #ffffff;
+    --app-color-text-primary: #111827;
+    --app-color-text-secondary: #64748b;
+    --app-color-text-muted: #94a3b8;
+    --app-color-border: #e5e7eb;
+
+    // 业务语义色
+    --app-color-success: #22c55e;
+    --app-color-warning: #f59e0b;
+    --app-color-danger: #ef4444;
+
+    // 常用透明色与渐变
+    --app-shadow-primary-18: rgba(32, 128, 240, 0.18);
+    --app-shadow-primary-24: rgba(32, 128, 240, 0.24);
+    --app-shadow-slate-06: rgba(15, 23, 42, 0.06);
+    --app-shadow-slate-10: rgba(15, 23, 42, 0.1);
+    --app-gradient-primary: linear-gradient(
+        135deg,
+        var(--app-color-primary) 0%,
+        var(--app-color-primary-end) 100%
+    );
+
+    // Wot Design 主题色
+    --wot-color-theme: var(--app-color-primary);
+
+    // NutUI 主题色
+    --nut-primary-color: var(--app-color-primary);
+    --nut-primary-color-end: var(--app-color-primary-end);
+}

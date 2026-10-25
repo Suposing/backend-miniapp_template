@@ -1,0 +1,18 @@
+{
+    "compilerOptions": {
+        "target": "ES2020",
+        "module": "CommonJS",
+        "moduleResolution": "Node",
+        "lib": ["ES2020"],
+        "types": [],
+        "strict": true,
+        "noEmitOnError": true,
+        "declaration": true,
+        "rootDir": "src",
+        "outDir": "dist/cjs",
+        "tsBuildInfoFile": "dist/cjs.tsbuildinfo",
+        "forceConsistentCasingInFileNames": true,
+        "incremental": true
+    },
+    "include": ["src/**/*.ts"]
+}

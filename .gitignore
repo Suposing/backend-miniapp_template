@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+coverage/
+apps/api/src/generated/
+apps/api/uploads/
+.local/
+*.log
+*.timestamp-*.mjs
+.DS_Store

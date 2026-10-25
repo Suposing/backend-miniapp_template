@@ -1,0 +1,40 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "jsx": "preserve",
+        "jsxFactory": "h",
+        "jsxFragmentFactory": "Fragment",
+        "lib": ["DOM", "ESNext"],
+        "baseUrl": ".",
+        "rootDir": ".",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "paths": {
+            "~/*": ["./src/*"],
+            "@/*": ["./src/*"],
+            "@@/*": ["./*"]
+        },
+        "resolveJsonModule": true,
+        "types": [
+            "vite/client",
+            "@dcloudio/types",
+            "@uni-helper/uni-app-types",
+            "@uni-helper/uni-ui-types",
+            "@uni-helper/vite-plugin-uni-pages/client",
+            "miniprogram-api-typings"
+        ],
+        "allowImportingTsExtensions": true,
+        "allowJs": true,
+        "strict": true,
+        "strictNullChecks": true,
+        "noUnusedLocals": false,
+        "outDir": "dist",
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+        "skipLibCheck": true
+    },
+    "vueCompilerOptions": {
+        "plugins": ["@uni-helper/uni-app-types/volar-plugin"]
+    },
+    "exclude": ["node_modules", "dist"]
+}

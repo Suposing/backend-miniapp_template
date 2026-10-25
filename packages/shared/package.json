@@ -1,0 +1,76 @@
+{
+    "name": "@app/shared",
+    "version": "0.1.0",
+    "private": true,
+    "description": "基础模板三端共用的接口契约、业务常量与权限定义",
+    "type": "commonjs",
+    "main": "./dist/cjs/index.js",
+    "module": "./dist/esm/index.js",
+    "types": "./dist/cjs/index.d.ts",
+    "sideEffects": false,
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./dist/esm/index.d.ts",
+                "default": "./dist/esm/index.js"
+            },
+            "require": {
+                "types": "./dist/cjs/index.d.ts",
+                "default": "./dist/cjs/index.js"
+            }
+        },
+        "./api": {
+            "import": {
+                "types": "./dist/esm/api/index.d.ts",
+                "default": "./dist/esm/api/index.js"
+            },
+            "require": {
+                "types": "./dist/cjs/api/index.d.ts",
+                "default": "./dist/cjs/api/index.js"
+            }
+        },
+        "./constants": {
+            "import": {
+                "types": "./dist/esm/constants/index.d.ts",
+                "default": "./dist/esm/constants/index.js"
+            },
+            "require": {
+                "types": "./dist/cjs/constants/index.d.ts",
+                "default": "./dist/cjs/constants/index.js"
+            }
+        },
+        "./permissions": {
+            "import": {
+                "types": "./dist/esm/permissions/index.d.ts",
+                "default": "./dist/esm/permissions/index.js"
+            },
+            "require": {
+                "types": "./dist/cjs/permissions/index.d.ts",
+                "default": "./dist/cjs/permissions/index.js"
+            }
+        }
+    },
+    "typesVersions": {
+        "*": {
+            "api": [
+                "dist/cjs/api/index.d.ts"
+            ],
+            "constants": [
+                "dist/cjs/constants/index.d.ts"
+            ],
+            "permissions": [
+                "dist/cjs/permissions/index.d.ts"
+            ]
+        }
+    },
+    "scripts": {
+        "prepare": "pnpm build",
+        "build": "node scripts/build.mjs",
+        "dev": "node scripts/build.mjs --watch",
+        "type-check": "tsc --noEmit -p tsconfig.json",
+        "test": "pnpm build && node --test tests/*.test.mjs"
+    },
+    "devDependencies": {
+        "typescript": "5.9.3"
+    }
+}

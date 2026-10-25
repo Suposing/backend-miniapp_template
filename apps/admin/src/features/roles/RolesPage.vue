@@ -1,0 +1,512 @@
+<script setup lang="ts">
+    import type { Role } from '@/lib/api-types';
+    import type { AppColumnDef } from '@/components/data-table/table-types';
+
+    import { computed, h, ref } from 'vue';
+
+    import { useQueryClient } from '@tanstack/vue-query';
+    import { useVueTable } from '@tanstack/vue-table';
+    import { getCoreRowModel, getSortedRowModel } from '@tanstack/vue-table';
+    import { useToast } from '@nuxt/ui/composables';
+
+    import {
+        deleteRole,
+        getRoleErrorMessage,
+        ROLES_QUERY_KEY,
+        updateRole,
+    } from './role-api';
+    import RoleFormDialog from './RoleFormDialog.vue';
+    import RoleGrantDrawer from './RoleGrantDrawer.vue';
+    import RoleMembersDrawer from './RoleMembersDrawer.vue';
+    import RolesRowActions from './RolesRowActions.vue';
+
+    import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
+    import DataTable from '@/components/data-table/DataTable.vue';
+    import DataTableSearchReset from '@/components/data-table/DataTableSearchReset.vue';
+    import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue';
+    import { useColumnSettingKey } from '@/composables/use-column-setting-key';
+    import { type AppTable } from '@/components/data-table/table-types';
+    import Spinner from '@/components/ui/spinner/index.vue';
+    import { MENUS_QUERY_KEY } from '@/composables/use-menus';
+    import { useMenuPermissions } from '@/composables/use-permissions';
+    import { useListQuery } from '@/composables/use-list-query';
+    import { createListStore } from '@/lib/list-store';
+    import { formatDateTime } from '@/lib/format-date';
+    import { SUPER_ADMIN_ROLE_CODE } from '@/lib/constants';
+
+    /**
+     * 角色管理页：服务端分页列表
+     * （page/pageSize/search/enabled）+ CRUD + 菜单授权。
+     *
+     * - 状态切换走 PUT /roles/:id 的 enabled 字段（EDIT 位）；
+     * - 删除为强确认（输入角色 code），已关联用户由后端 409 ROLE_IN_USE 拦截；
+     * - 菜单授权为右侧 Drawer（GRANT 位控制入口），保存后失效导航菜单缓存：
+     *   若改的是当前用户自己的角色，侧边栏与按钮权限立即生效；
+     * - super_admin 行：授权/删除/状态切换不可用（全量权限载体，后端 403 兜底）；
+     *   编辑保留——name/description 无权限语义。
+     */
+
+    /**
+     * 列表 store（模块级单例：导航返回复用同一份分页/筛选状态）
+     */
+    const rolesListStore = createListStore<{
+        /**
+         * 是否启用；true 启用，false 停用。
+         */
+        enabled: string | null;
+    }>({
+        enabled: null,
+    });
+
+    const toast = useToast();
+    const queryClient = useQueryClient();
+    const store = rolesListStore;
+
+    const { canAdd, canEdit, canDelete, canGrant } = useMenuPermissions();
+
+    const {
+        data,
+        pagination,
+        isLoading,
+        isFetching,
+        isError,
+        refetch,
+        submitSearch,
+    } = useListQuery<
+        Role,
+        {
+            /**
+             * 是否启用；true 启用，false 停用。
+             */
+            enabled: string | null;
+        }
+    >({
+        store,
+        queryKeyPrefix: ROLES_QUERY_KEY,
+        path: '/roles',
+        buildFilters: (f) => (f.enabled ? { enabled: f.enabled } : {}),
+    });
+
+    // 搜索（提交式后端过滤）；
+    // 条件未变化时 submitSearch 走 refetch，搜索按钮即「刷新列表」入口
+    const searchInput = ref(store.search);
+
+    function applySearch() {
+        submitSearch(searchInput.value.trim());
+    }
+
+    const searchDirty = computed(
+        () => searchInput.value.trim() !== store.search,
+    );
+
+    function resetFilters() {
+        searchInput.value = '';
+        store.reset();
+    }
+
+    const filterOptions = computed(() => [
+        { label: '启用', value: 'true' },
+        { label: '停用', value: 'false' },
+    ]);
+
+    // ---------------- 弹窗状态 ----------------
+    const formOpen = ref(false);
+    const formMode = ref<'create' | 'edit'>('create');
+    const formRole = ref<Role | null>(null);
+
+    const grantOpen = ref(false);
+    const grantRole = ref<Role | null>(null);
+
+    const deleteOpen = ref(false);
+    const deleteTarget = ref<Role | null>(null);
+    const deleteSubmitting = ref(false);
+
+    const membersOpen = ref(false);
+    const membersRole = ref<Role | null>(null);
+
+    /**
+     * 关联用户穿透：点击列表「关联用户」列 +N 打开
+     */
+    function openMembers(role: Role) {
+        membersRole.value = role;
+        membersOpen.value = true;
+    }
+
+    function openForm(mode: 'create' | 'edit', role: Role | null) {
+        formMode.value = mode;
+        formRole.value = role;
+        formOpen.value = true;
+    }
+
+    function invalidateList() {
+        void queryClient.invalidateQueries({ queryKey: ROLES_QUERY_KEY });
+    }
+
+    /**
+     * 授权保存后：失效导航菜单缓存（当前用户自己的角色授权立即生效）
+     */
+    function handleGrantSaved() {
+        void queryClient.invalidateQueries({ queryKey: MENUS_QUERY_KEY });
+    }
+
+    /**
+     * 状态切换（PUT enabled 字段；toast.promise 三段反馈：启用中/停用中 → 成功/失败）
+     */
+    async function toggleStatus(role: Role) {
+        const enabling = !role.enabled;
+
+        const loadingToast = toast.add({
+            title: enabling ? '正在启用角色…' : '正在停用角色…',
+            icon: h(Spinner, { size: 'sm', class: 'mt-0.5' }),
+            color: 'info',
+            duration: 0,
+        });
+
+        try {
+            await updateRole(role.id, { name: role.name, enabled: enabling });
+            invalidateList();
+            toast.update(loadingToast.id, {
+                title: '角色状态已更新',
+                icon: 'i-lucide-check',
+                color: 'success',
+            });
+        } catch (error) {
+            toast.update(loadingToast.id, {
+                title: getRoleErrorMessage(error),
+                icon: 'i-lucide-x',
+                color: 'error',
+            });
+        }
+    }
+
+    async function confirmDelete() {
+        if (!deleteTarget.value) return;
+
+        deleteSubmitting.value = true;
+
+        try {
+            await deleteRole(deleteTarget.value.id);
+        } catch (error) {
+            toast.add({
+                color: 'error',
+                title: getRoleErrorMessage(error),
+            });
+
+            return; // 失败保持弹窗打开
+        } finally {
+            deleteSubmitting.value = false;
+        }
+
+        invalidateList();
+        deleteOpen.value = false;
+        toast.add({
+            color: 'success',
+            title: '角色已删除',
+        });
+    }
+
+    // ---------------- 表格 ----------------
+    const columns = computed<AppColumnDef<Role>[]>(() => [
+        {
+            id: 'name',
+            enableSorting: false,
+            header: () => '角色名称',
+            cell: ({ row }) =>
+                h(
+                    'div',
+                    { class: 'flex items-center gap-2' },
+                    h(
+                        'span',
+                        { class: 'text-sm font-medium' },
+                        row.original.name,
+                    ),
+                ),
+        },
+        {
+            id: 'code',
+            enableSorting: false,
+            header: () => '角色标识',
+            cell: ({ row }) =>
+                h('span', { class: 'font-mono text-sm' }, row.original.code),
+        },
+        {
+            id: 'description',
+            enableSorting: false,
+            header: () => '描述',
+            cell: ({ row }) =>
+                h(
+                    'span',
+                    { class: 'text-muted max-w-64 truncate text-sm' },
+                    row.original.description || '—',
+                ),
+        },
+        {
+            id: 'readers',
+            enableSorting: false,
+            header: () => '关联用户',
+            cell: ({ row }) => {
+                const readers = row.original.readers ?? [];
+
+                // 无关联用户占位；有则 UAvatarGroup 堆叠（最多 3 个），超出部分 +N
+                // （N = userCount - 3），点击 +N 打开关联用户名单抽屉（契约 v1.13.0）。
+                // +N 须自绘（组内置计数基于 children 数，服务端只回 3 个不会触发）；
+                // 组件内部先对 children reverse 再以 flex-row-reverse 渲染，双重反转
+                // 后视觉顺序 == children 传入顺序，故按 [头像正序..., +N] 传即得
+                // React 端形态（+N 在尾部）；UAvatar 透传点击与键盘可达性
+                if (readers.length === 0) {
+                    return h('span', { class: 'text-muted text-sm' }, '—');
+                }
+                const shown = readers.slice(0, 3);
+                const extra = Math.max(
+                    (row.original.userCount ?? shown.length) - shown.length,
+                    0,
+                );
+                const open = () => openMembers(row.original);
+
+                return h(UAvatarGroup, { size: 'sm' }, () => [
+                    ...shown.map((reader) =>
+                        h(UAvatar, {
+                            key: reader.id,
+                            alt: reader.name,
+                            src: reader.avatar ?? undefined,
+                            text: reader.name.slice(0, 1),
+                        }),
+                    ),
+                    ...(extra > 0
+                        ? [
+                              h(UAvatar, {
+                                  text: `+${extra}`,
+                                  class: 'cursor-pointer transition-opacity hover:opacity-80',
+                                  role: 'button',
+                                  tabindex: 0,
+                                  'aria-label': `「${row.original.name}」关联用户`,
+                                  onClick: open,
+                                  onKeydown: (event: KeyboardEvent) => {
+                                      if (
+                                          event.key === 'Enter' ||
+                                          event.key === ' '
+                                      ) {
+                                          event.preventDefault();
+                                          open();
+                                      }
+                                  },
+                              }),
+                          ]
+                        : []),
+                ]);
+            },
+        },
+        {
+            id: 'sort',
+            enableSorting: false,
+            header: () => '排序',
+            cell: ({ row }) =>
+                h(UBadge, {
+                    color: 'neutral',
+                    label: String(row.original.sort),
+                    variant: 'soft',
+                }),
+        },
+        {
+            id: 'enabled',
+            enableSorting: false,
+            header: () => '状态',
+            cell: ({ row }) =>
+                h(UBadge, {
+                    color: row.original.enabled ? 'success' : 'error',
+                    label: row.original.enabled ? '启用' : '停用',
+                    variant: 'soft',
+                }),
+        },
+        {
+            id: 'createdAt',
+            enableSorting: false,
+            header: () => '创建时间',
+            cell: ({ row }) =>
+                h(
+                    'span',
+                    { class: 'text-muted text-sm' },
+                    formatDateTime(row.original.createdAt),
+                ),
+        },
+        {
+            id: 'actions',
+            enableSorting: false,
+            enableHiding: false,
+            header: () => '操作',
+            cell: ({ row }) => {
+                // 系统内置角色保护：super_admin 的授权/删除/状态切换均不可用
+                const isSuperAdmin =
+                    row.original.code === SUPER_ADMIN_ROLE_CODE;
+                const canGrantRow = canGrant.value && !isSuperAdmin;
+                const canToggle = canEdit.value && !isSuperAdmin;
+                const canDeleteRow = canDelete.value && !isSuperAdmin;
+
+                if (!canGrantRow && !canEdit.value && !canDeleteRow)
+                    return null;
+
+                return h(RolesRowActions, {
+                    role: row.original,
+                    canEdit: canEdit.value,
+                    canGrantRow,
+                    canToggle,
+                    canDeleteRow,
+                    onAction: (key) => {
+                        if (key === 'grant') {
+                            grantRole.value = row.original;
+                            grantOpen.value = true;
+                        }
+                        if (key === 'edit') openForm('edit', row.original);
+                        if (key === 'toggle' && canToggle)
+                            void toggleStatus(row.original);
+                        if (key === 'delete') {
+                            deleteTarget.value = row.original;
+                            deleteOpen.value = true;
+                        }
+                    },
+                });
+            },
+        },
+    ]);
+
+    const columnSettingKey = useColumnSettingKey('/settings/roles');
+
+    const table: AppTable<Role> = useVueTable({
+        get data() {
+            return data.value;
+        },
+        get columns() {
+            return columns.value;
+        },
+        getCoreRowModel: getCoreRowModel(),
+        getSortedRowModel: getSortedRowModel(),
+        getRowId: (row: Role) => row.id,
+        // 服务端分页：分页状态由列表 store 驱动（受控），仅取数
+        manualPagination: true,
+        // pageCount 必须用 getter 实时求值：setup 时 total 为 0 会写死为 1，
+        // setPageIndex 被 clamp 导致永远翻不了页（对齐 React 每次渲染重建 options）
+        get pageCount() {
+            return Math.max(
+                1,
+                Math.ceil(pagination.value.total / store.pageSize),
+            );
+        },
+        state: {
+            get pagination() {
+                return { pageIndex: store.page - 1, pageSize: store.pageSize };
+            },
+        },
+        onPaginationChange: (updater) => {
+            const next =
+                typeof updater === 'function'
+                    ? updater({
+                          pageIndex: store.page - 1,
+                          pageSize: store.pageSize,
+                      })
+                    : updater;
+
+            if (next.pageSize !== store.pageSize) {
+                store.setPageSize(next.pageSize);
+            } else {
+                store.setPage(next.pageIndex + 1);
+            }
+        },
+    });
+
+    import { resolveComponent } from 'vue';
+
+    // 组件引用（供 h() 使用）
+    const UBadge = resolveComponent('UBadge');
+    const UAvatar = resolveComponent('UAvatar');
+    const UAvatarGroup = resolveComponent('UAvatarGroup');
+</script>
+
+<template>
+    <div class="flex w-full flex-col gap-4">
+        <DataTableToolbar :column-setting-key="columnSettingKey" :table="table">
+            <UInput
+                v-model="searchInput"
+                aria-label="搜索角色名称 / 标识"
+                placeholder="搜索角色名称 / 标识"
+                class="w-64"
+                icon="i-lucide-search"
+                @keyup.enter="applySearch"
+            />
+            <USelectMenu
+                aria-label="状态"
+                :items="filterOptions"
+                :model-value="store.filters.enabled ?? undefined"
+                placeholder="状态"
+                class="w-36"
+                value-key="value"
+                clear
+                :search-input="false"
+                @update:model-value="
+                    (value: unknown) =>
+                        store.setFilters({ enabled: value as string })
+                "
+            />
+            <DataTableSearchReset
+                :can-reset="
+                    searchDirty ||
+                    store.search !== '' ||
+                    store.filters.enabled !== null
+                "
+                :fetching="isFetching"
+                @reset="resetFilters"
+                @search="applySearch"
+            />
+            <UButton
+                v-if="canAdd"
+                label="新增角色"
+                icon="i-lucide-plus"
+                variant="outline"
+                @click="openForm('create', null)"
+            />
+        </DataTableToolbar>
+
+        <DataTable
+            :is-error="isError"
+            :loading="isLoading"
+            :refreshing="isFetching && !isLoading"
+            :table="table"
+            :total="pagination.total"
+            @retry="refetch()"
+        />
+
+        <RoleFormDialog
+            v-model:open="formOpen"
+            :mode="formMode"
+            :role="formRole"
+            @saved="invalidateList"
+        />
+
+        <RoleGrantDrawer
+            v-model:open="grantOpen"
+            :role="
+                grantOpen && grantRole
+                    ? {
+                          id: grantRole.id,
+                          name: grantRole.name,
+                          code: grantRole.code,
+                      }
+                    : null
+            "
+            @saved="handleGrantSaved"
+        />
+
+        <RoleMembersDrawer v-model:open="membersOpen" :role="membersRole" />
+
+        <ConfirmDialog
+            v-model:open="deleteOpen"
+            :confirm-keyword="deleteTarget?.code"
+            confirm-text="删除"
+            :description="`确定删除角色「${deleteTarget?.name ?? ''}」吗？该操作不可恢复。`"
+            keyword-label="角色标识"
+            :loading="deleteSubmitting"
+            title="删除角色"
+            destructive
+            @confirm="confirmDelete"
+        />
+    </div>
+</template>
